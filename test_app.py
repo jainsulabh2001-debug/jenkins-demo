@@ -1,36 +1,64 @@
-# import the create_app function
-from app import create_app
+pipeline {
+    agent any
+    environment {
+        // docker image name
+        DOCKER_IMAGE_NAME="amitksunbeam/python-test-app"
 
-# import pytest to use the fixture decorator
-import pytest
+        // docker user name
+        DOCKER_USER_NAME="amitksunbeam"
 
-@pytest.fixture()
-def app():
-    # create the app
-    app = create_app()
+        // docker user auth token
+        DOCKER_AUTH_TOKEN=credentials('DOCKER_AUTH_TOKEN')
+    }
 
-    # set the flag that this is a test application
-    # and not the real server
-    app.config['TESTING'] = True
+    stages {
+        // stage('scm') {
+        //     steps {
+        //         echo "already taken care by Jenkins"
+        //     }
+        // }
 
-    # yield the application instance
-    yield app
+        // install the required packages
+        stage('prepare env') {
+            steps {
+                // execute a shell command
+                sh 'pip3 install --break-system-package -r requirements.txt '
+            }
+        }
 
+        // test the application
+        stage('test') {
+            steps {
+                sh 'pytest test_app.py'
+            }
+        }
 
-@pytest.fixture()
-def client(app):
-    return app.test_client()
+        // build the docker image 
+        stage('build docker image') {
+            steps {
+                sh 'docker image build -t ${DOCKER_IMAGE_NAME} .'
+            }
+        }
 
-def test_root(client):
-    # send a dummy request to /
-    response = client.get("/")
+        // login to docker hub
+        stage('docker login') {
+            steps {
+                sh 'echo ${DOCKER_AUTH_TOKEN} | docker login -u ${DOCKER_USER_NAME} --password-stdin'
+            }
+        }
 
-    # check if the response status code is 200
-    assert(response.status_code == 200)
+        // push the docker image to docker hub
+        stage('push docker image') {
+            steps {
+                sh 'docker image push ${DOCKER_IMAGE_NAME}'
+            }
+        }
 
-def test_health(client):
-    # send a dummy request to /health
-    response = client.get('/health')
-
-    # check if response status code is 200
-    assert(response.status_code == 200)
+        // restart the service
+        stage('restart service') {
+            steps {
+                sh 'docker service update --force --image ${DOCKER_IMAGE_NAME} python-app' 
+            }
+        }
+    }
+}
